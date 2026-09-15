@@ -1,0 +1,9 @@
+[tool.ruff]
+src = ["backend"]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+# E/F: pyflakes + pycodestyle errors, I: import sorting, UP: pyupgrade,
+# B: bugbear (common footguns), SIM: obvious simplifications.
+select = ["E", "F", "I", "UP", "B", "SIM"]

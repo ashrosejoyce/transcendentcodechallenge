@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Community Voices</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<header class="page-header">
+  <div>
+    <h1>Community Voices</h1>
+    <p class="subtitle" id="community-subtitle">RAG-generated community digest</p>
+  </div>
+  <button id="ingest-btn" class="btn btn-secondary">Refresh data from forum</button>
+</header>
+
+<main>
+  <section class="stat-row" id="stat-row" aria-label="Corpus statistics">
+    <div class="stat-tile"><span class="stat-label">Posts ingested</span><span class="stat-value" id="stat-posts">&ndash;</span></div>
+    <div class="stat-tile"><span class="stat-label">Chunks embedded</span><span class="stat-value" id="stat-chunks">&ndash;</span></div>
+    <div class="stat-tile"><span class="stat-label">Boards covered</span><span class="stat-value" id="stat-boards">&ndash;</span></div>
+    <div class="stat-tile"><span class="stat-label">Date range</span><span class="stat-value stat-value-small" id="stat-range">&ndash;</span></div>
+  </section>
+
+  <section class="panel" id="ingest-log-panel" hidden>
+    <h2>Last ingest run</h2>
+    <pre id="ingest-log" class="log"></pre>
+  </section>
+
+  <section class="panel">
+    <div class="panel-header">
+      <h2>Community Voices Document</h2>
+      <div class="panel-actions">
+        <label class="timeframe-label" for="timeframe-select">Timeframe</label>
+        <select id="timeframe-select" class="select">
+          <option value="day">Day</option>
+          <option value="week" selected>Week</option>
+          <option value="month">Month</option>
+          <option value="year">Year</option>
+        </select>
+        <button id="download-report-btn" class="btn btn-secondary" hidden>Download report</button>
+        <button id="generate-btn" class="btn btn-primary">Generate this week's document</button>
+      </div>
+    </div>
+    <p class="hint">Runs the full pipeline: embed the query &rarr; retrieve top matching forum posts &rarr; ask Claude to write the document grounded in them. Also runs the same prompt with <em>no</em> retrieval, for the A/B comparison below.</p>
+
+    <div class="ab-grid">
+      <article class="doc-card doc-card-rag">
+        <h3>RAG-empowered <span class="badge badge-good">grounded</span></h3>
+        <div id="rag-doc" class="doc-body">Pick a timeframe and click Generate to run the pipeline.</div>
+      </article>
+      <article class="doc-card doc-card-baseline">
+        <h3>Plain LLM <span class="badge badge-muted">no retrieval</span></h3>
+        <div id="baseline-doc" class="doc-body">&ndash;</div>
+      </article>
+    </div>
+
+    <details id="sources-details" class="sources">
+      <summary>Retrieved source posts (<span id="sources-count">0</span>)</summary>
+      <table class="sources-table">
+        <thead><tr><th>Board</th><th>Subject</th><th>Author</th><th>Date</th><th>Distance</th></tr></thead>
+        <tbody id="sources-body"></tbody>
+      </table>
+    </details>
+  </section>
+
+  <section class="panel two-col">
+    <div>
+      <h2>Embedding space</h2>
+      <p class="hint">Each dot is one indexed chunk, projected to 2D with PCA. Color = board (top boards; the rest fold into &ldquo;Other&rdquo;).</p>
+      <div class="viz-wrap">
+        <svg id="embedding-svg" viewBox="0 0 480 380" role="img" aria-label="Scatter plot of chunk embeddings"></svg>
+        <div id="embedding-tooltip" class="tooltip" hidden></div>
+      </div>
+      <div id="embedding-legend" class="legend"></div>
+    </div>
+    <div>
+      <h2>Most-retrieved chunks</h2>
+      <p class="hint">Every retrieval is logged; this ranks which forum posts have been pulled into a generated document most often.</p>
+      <div id="retrieval-bars" class="bar-chart"></div>
+    </div>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,66 @@
+# Self-contained Docker setup for Community Voices.
+#
+# Two services, matching the app's actual architecture:
+#   backend  - FastAPI + the crawler/RAG/generation pipeline + embedded
+#              SQLite (sqlite-vec). No separate database container is
+#              needed: SQLite is an in-process file store, persisted here
+#              via the `db-data` named volume instead of a DB service.
+#   frontend - nginx serving the static vanilla-JS UI and reverse-proxying
+#              /api/ to the backend, so the browser only ever talks to one
+#              origin and the backend needs no CORS configuration.
+#
+# Usage:
+#   cp .env.example .env   # then add your own ANTHROPIC_API_KEY (optional -
+#                           # everything except document generation works
+#                           # without one)
+#   docker compose up --build
+#   open http://localhost:8080
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-sonnet-5}
+      # Which community/forum to analyze - see .env.example. Defaults are
+      # fully generic; a real deployment sets these in .env.
+      COMMUNITY_NAME: ${COMMUNITY_NAME:-this community}
+      FORUM_BASE_URL: ${FORUM_BASE_URL:-https://beekeepingforum.co.uk}
+      FORUM_ADAPTER: ${FORUM_ADAPTER:-xenforo}
+      FORUM_EXCLUDED_BOARDS: ${FORUM_EXCLUDED_BOARDS:-[]}
+      CRAWL_LOOKBACK_DAYS: ${CRAWL_LOOKBACK_DAYS:-7}
+      CRAWL_MAX_POSTS: ${CRAWL_MAX_POSTS:-400}
+      # Respect a target forum's own robots.txt Crawl-delay when set (e.g.
+      # beekeepingforum.co.uk asks for 5s) - this was previously missing
+      # from the passthrough list entirely, so a value set in .env was
+      # silently ignored under Docker.
+      CRAWL_REQUEST_DELAY_SECONDS: ${CRAWL_REQUEST_DELAY_SECONDS:-1}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
+      # Fixed to the mounted volume path below, regardless of any
+      # DATABASE_PATH left over in a local .env from non-Docker use.
+      DATABASE_PATH: /app/data/community_voices.db
+    volumes:
+      - db-data:/app/data
+    ports:
+      - "8000:8000" # direct API access for debugging; the frontend also proxies to this
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/stats"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  db-data:

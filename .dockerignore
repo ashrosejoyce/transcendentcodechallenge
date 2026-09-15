@@ -1,0 +1,17 @@
+# Applies to the backend build context (repo root - see docker-compose.yml).
+.git/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Never bake secrets into an image - passed in at runtime instead.
+.env
+
+# Not needed in the backend image; nginx serves this from its own image.
+frontend/
