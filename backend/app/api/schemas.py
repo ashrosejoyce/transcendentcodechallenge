@@ -87,7 +87,22 @@ class GenerateResponse(BaseModel):
     baseline_document: str
     retrieved_chunks: list[RetrievedChunkView]
     grounded_claim_count: int
-    # Suggested filename for downloading rag_document, parameterized by
-    # whichever community was actually analyzed for this request (see
-    # generation/report_filename.py) - never a hardcoded forum name.
+    # Suggested filename for downloading rag_document as a PDF,
+    # parameterized by whichever community was actually analyzed for this
+    # request (see generation/report_filename.py) - never a hardcoded
+    # forum name.
+    report_filename: str
+
+
+class ReportPdfRequest(BaseModel):
+    """Renders a PDF from a document /api/generate already produced -
+    the frontend passes back exactly what it received, so this never
+    re-runs retrieval or calls Claude again just to change the format."""
+
+    community_name: str
+    timeframe: str
+    rag_document: str
+    baseline_document: str
+    retrieved_chunks: list[RetrievedChunkView]
+    grounded_claim_count: int
     report_filename: str

@@ -189,13 +189,14 @@ model, is baked into the image at build time.
 docker compose up --build
 ```
 
-Then open **http://localhost:8080**. Two containers, matching the app's
-actual architecture (see `docker-compose.yml`):
+Then open **http://localhost:8000**. Two containers, deliberately
+decoupled - no reverse proxy between them, just CORS (see
+`docker-compose.yml`):
 
 | Service | What it is | Port |
 |---|---|---|
-| `frontend` | nginx serving the static UI, reverse-proxying `/api/` to `backend` | http://localhost:8080 |
-| `backend` | FastAPI + crawler/RAG/generation pipeline + embedded SQLite (sqlite-vec) | http://localhost:8000 (direct, for debugging) |
+| `frontend` | nginx serving the static UI - talks to `backend` directly and cross-origin | http://localhost:8000 |
+| `backend` | FastAPI + crawler/RAG/generation pipeline + embedded SQLite (sqlite-vec) | http://localhost:8080 |
 
 No separate database container: SQLite is an in-process file store, not a
 service of its own, and is persisted across restarts via the `db-data`
@@ -209,13 +210,24 @@ database volume).
 
 ### Option B: Run locally with Python
 
+Same decoupled shape as Docker: the backend and frontend are two
+separate processes, each in its own terminal.
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 
 pip install -r requirements.txt
 
-uvicorn app.main:app --reload --app-dir backend
+uvicorn app.main:app --reload --app-dir backend --port 8080
+```
+
+In a second terminal, serve the static frontend on port 8000 (any static
+file server works - this one needs nothing beyond Python itself):
+
+```bash
+cd frontend
+python3 -m http.server 8000
 ```
 
 Then open **http://localhost:8000**.
@@ -234,8 +246,9 @@ Either way, once it's running:
    baseline side by side over that window of posts, predicting the same
    length of time ahead, and logs the retrieval stats / updates the
    embedding scatter plot. See `generation/timeframe.py`.
-3. Click **"Download report"** to save the generated document as a local
-   file, named after whichever community was analyzed (see
+3. Click **"Download report"** to save the RAG document, baseline, and
+   full source list as a formatted PDF (`generation/report_pdf.py`),
+   named after whichever community was analyzed (see
    `generation/report_filename.py`).
 
 ## Running the tests
@@ -244,7 +257,7 @@ Either way, once it's running:
 pytest
 ```
 
-93 tests across 15 files:
+99 tests across 16 files:
 
 | File | Covers |
 |---|---|
@@ -258,6 +271,7 @@ pytest
 | `test_timeframe.py` | day/week/month/year preset resolution, cutoff math, and unknown-label rejection |
 | `test_prompts.py` | RAG vs. baseline prompt construction never leaks retrieved content into the baseline, and reflects the chosen timeframe |
 | `test_report_filename.py` | report-filename slugification, parameterized per community and (optionally) timeframe |
+| `test_report_pdf.py` | the markdown-lite-to-HTML conversion (headings, inline bold/italic, HTML-escaping) and that a real PDF comes out |
 | `test_retrieval.py` | `retrieve()`'s row-mapping, `since`-cutoff filtering/overfetch, and retrieval-logging, against a stub DB connection |
 | `test_indexing.py` | chunk/embed orchestration, with the embedding model and DB mocked out |
 | `test_ab_comparison.py` | the RAG-vs-baseline A/B orchestration, with the LLM and retrieval mocked out |
@@ -399,7 +413,7 @@ for a command that wasn't actually run.
 backend/app/
   crawler/       HTTP client, ingestion orchestration, pluggable ForumAdapter (forum_adapter.py, adapter_registry.py); parser.py + smf_adapter.py (SMF) and xenforo_parser.py + xenforo_adapter.py (XenForo) are the two shipped implementations
   rag/            chunking, embeddings, vector store, retrieval, visualization
-  generation/     prompts, Claude client, RAG doc, baseline doc, A/B comparison, report filename
+  generation/     prompts, Claude client, RAG doc, baseline doc, A/B comparison, report filename + PDF rendering
   db/              schema, connection (sqlite-vec), repository (all SQL lives here)
   api/             FastAPI routes + request/response schemas
   tests/           pytest suite + HTML fixtures

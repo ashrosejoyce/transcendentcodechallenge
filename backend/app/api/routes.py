@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 
 from app.api.schemas import (
     CommunityInfo,
@@ -12,6 +12,7 @@ from app.api.schemas import (
     GenerateRequest,
     GenerateResponse,
     IngestResponse,
+    ReportPdfRequest,
     RetrievedChunkView,
     StatsResponse,
 )
@@ -23,6 +24,7 @@ from app.db.repository import corpus_stats, retrieval_counts, save_posts
 from app.generation.ab_comparison import run_ab_comparison
 from app.generation.claude_client import MissingApiKeyError
 from app.generation.report_filename import build_report_filename
+from app.generation.report_pdf import PdfSourceChunk, render_report_pdf
 from app.generation.timeframe import resolve_timeframe
 from app.rag.indexing import index_pending_posts
 from app.rag.visualization import flattened_embeddings
@@ -109,7 +111,9 @@ def generate(request: GenerateRequest) -> GenerateResponse:
         rag_document=result.rag.text,
         baseline_document=result.baseline_text,
         grounded_claim_count=result.grounded_claim_count,
-        report_filename=build_report_filename(result.community_name, timeframe_label=result.timeframe.label),
+        report_filename=build_report_filename(
+            result.community_name, timeframe_label=result.timeframe.label, extension="pdf"
+        ),
         retrieved_chunks=[
             RetrievedChunkView(
                 chunk_id=c.chunk_id,
@@ -123,4 +127,29 @@ def generate(request: GenerateRequest) -> GenerateResponse:
             )
             for c in result.rag.retrieved_chunks
         ],
+    )
+
+
+@router.post("/report/pdf")
+def report_pdf(request: ReportPdfRequest) -> Response:
+    """Render a document /api/generate already produced as a downloadable
+    PDF. Takes exactly what /api/generate returned - never re-runs
+    retrieval or calls Claude again just to change the output format."""
+    pdf_bytes = render_report_pdf(
+        community_name=request.community_name,
+        timeframe_label=request.timeframe,
+        rag_document=request.rag_document,
+        baseline_document=request.baseline_document,
+        grounded_claim_count=request.grounded_claim_count,
+        retrieved_chunks=[
+            PdfSourceChunk(
+                subject=c.subject, board=c.board, author=c.author, posted_at=c.posted_at, url=c.url, distance=c.distance
+            )
+            for c in request.retrieved_chunks
+        ],
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{request.report_filename}"'},
     )

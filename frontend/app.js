@@ -1,9 +1,17 @@
 // Community Voices frontend. No build step, no framework - talks to the
 // FastAPI backend's JSON endpoints and renders everything with plain DOM APIs.
+//
+// Deliberately decoupled from the backend: this is a separate static
+// server/process, always on its own port, talking to the API cross-origin
+// over CORS rather than being proxied behind one origin. The backend is
+// assumed to be reachable on port 8080 of whatever host served this page -
+// true for both the Docker Compose setup and running both halves locally.
+const API_BASE = `${location.protocol}//${location.hostname}:8080`;
 
 const $ = (id) => document.getElementById(id);
 
-async function fetchJSON(url, options) {
+async function fetchJSON(path, options) {
+  const url = `${API_BASE}${path}`;
   const response = await fetch(url, options);
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
@@ -80,7 +88,7 @@ function generateButtonLabel() {
   return `Generate ${possessive} document`;
 }
 
-let lastReport = null; // { text, filename } - populated after a successful generate
+let lastReport = null; // the full /api/generate result - populated after a successful generate
 
 $("timeframe-select").addEventListener("change", () => {
   $("generate-btn").textContent = generateButtonLabel();
@@ -100,7 +108,7 @@ $("generate-btn").addEventListener("click", async () => {
     $("rag-doc").textContent = result.rag_document;
     $("baseline-doc").textContent = result.baseline_document;
     renderSources(result.retrieved_chunks);
-    setDownloadableReport(result.rag_document, result.report_filename);
+    setDownloadableReport(result);
     await loadStats(); // retrieval counts just changed
     await loadEmbeddingVisualization();
   } catch (error) {
@@ -111,20 +119,39 @@ $("generate-btn").addEventListener("click", async () => {
   }
 });
 
-function setDownloadableReport(text, filename) {
-  lastReport = { text, filename };
+function setDownloadableReport(result) {
+  lastReport = result;
   $("download-report-btn").hidden = false;
 }
 
-$("download-report-btn").addEventListener("click", () => {
+$("download-report-btn").addEventListener("click", async () => {
   if (!lastReport) return;
-  const blob = new Blob([lastReport.text], { type: "text/plain;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = lastReport.filename;
-  link.click();
-  URL.revokeObjectURL(url);
+  const button = $("download-report-btn");
+  button.disabled = true;
+  button.textContent = "Preparing PDF …";
+  try {
+    const response = await fetch(`${API_BASE}/api/report/pdf`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(lastReport),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.detail || `PDF generation failed with ${response.status}`);
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = lastReport.report_filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    alert(`Couldn't prepare the PDF: ${error.message}`);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Download report";
+  }
 });
 
 function renderSources(chunks) {

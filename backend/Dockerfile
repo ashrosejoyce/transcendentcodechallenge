@@ -4,9 +4,19 @@ FROM python:3.12-slim
 
 # ca-certificates: HTTPS calls to the forum + the Anthropic API
 # curl: used by the HEALTHCHECK below only
+# libpango-1.0-0/libpangoft2-1.0-0/libgdk-pixbuf-2.0-0: WeasyPrint's text
+# layout and image handling (generation/report_pdf.py) - it only looks
+# pure-Python; it dlopen()s these at import time and fails immediately
+# without them. fonts-dejavu-core: so the PDF's serif/mono type actually
+# renders with real glyphs instead of a bare fallback in a container that
+# ships no fonts of its own.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
+        libpango-1.0-0 \
+        libpangoft2-1.0-0 \
+        libgdk-pixbuf-2.0-0 \
+        fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
