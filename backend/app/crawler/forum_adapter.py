@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol
 
-from app.crawler.http_client import PoliteForumClient
+from app.crawler.http_client import ForumClient
 from app.crawler.parser import TopicPost
 from app.models import IngestedPost
 
@@ -97,7 +97,7 @@ class ForumAdapter(Protocol):
 
     def discover_recent_topics(
         self,
-        client: PoliteForumClient,
+        client: ForumClient,
         now: datetime,
         cutoff: datetime,
         excluded_boards: tuple[str, ...],

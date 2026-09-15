@@ -28,7 +28,7 @@ from datetime import UTC, datetime, timedelta
 from app.config import settings
 from app.crawler.adapter_registry import get_adapter
 from app.crawler.forum_adapter import DiscoveredTopic, ForumAdapter, IngestReport
-from app.crawler.http_client import PoliteForumClient
+from app.crawler.http_client import ForumClient
 from app.crawler.parser import TopicPost
 from app.models import IngestedPost
 
@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 
 def crawl_recent_activity(
-    client: PoliteForumClient,
+    client: ForumClient,
     now: datetime | None = None,
     lookback_days: int | None = None,
     max_posts: int | None = None,
@@ -72,7 +72,7 @@ def crawl_recent_activity(
 
 
 def _fetch_topic_posts(
-    client: PoliteForumClient,
+    client: ForumClient,
     adapter: ForumAdapter,
     topic_id: int,
     topic: DiscoveredTopic,

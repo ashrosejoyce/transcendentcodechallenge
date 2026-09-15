@@ -38,9 +38,9 @@ comparison).
 4. **Generate** the document twice with Claude: once grounded in the
    retrieved chunks (RAG), once with zero retrieval (baseline).
 5. **Serve** both, plus an embedding scatter plot and retrieval-frequency
-   stats, through a FastAPI JSON API and a small vanilla-JS frontend - and
-   download the generated document as a file named after whichever
-   community was analyzed.
+   stats, through a FastAPI JSON API and a small decoupled vanilla-JS
+   frontend - and download the generated document as a styled PDF named
+   after whichever community was analyzed.
 
 Nothing here is hardcoded to one specific forum - see
 [Pointing this at a different forum](#pointing-this-at-a-different-forum).
@@ -106,10 +106,12 @@ generation (Claude, via ANTHROPIC_API_KEY)
    -> baseline document (same prompt, zero retrieval) --- the A/B pair
         |
         v
-FastAPI JSON API  ->  interactive frontend (vanilla JS, no build step)
+FastAPI JSON API  ->  decoupled frontend (vanilla JS, no build step,
+                       cross-origin over CORS - see "Getting Started")
    - document view (RAG vs. baseline, side by side)
    - embedding scatter plot (PCA-flattened, spec item 3b)
    - most-retrieved-chunk stats (spec item 3c)
+   - "Download report" -> WeasyPrint renders the same content as a PDF
 ```
 
 Spec item mapping, for reviewers skimming against the brief:
@@ -236,11 +238,15 @@ Then open **http://localhost:8000**.
 
 Either way, once it's running:
 
-1. Click **"Refresh data from forum"** first — this crawls the forum,
-   chunks and embeds the results, and populates the vector store. (Takes
-   a minute or two the first time under Option B, mostly spent
-   downloading the local embedding model on its very first run - Docker
-   bakes the model in at build time, so this is fast there.)
+1. Click **"Refresh data from forum"** first — this starts a crawl in the
+   background and returns immediately (see `api/ingest_job.py`), so a
+   progress bar tracks real counts as they happen: an indeterminate sweep
+   while discovery has no fixed total yet, then a real percentage once
+   the number of topics to fetch is known. A real crawl under a polite
+   rate limit (`CRAWL_REQUEST_DELAY_SECONDS`) can take a couple of
+   minutes - that delay is real, not the UI being slow. Finishes with a
+   green "Success — N posts saved, M chunks indexed" banner (red on
+   failure), not a raw JSON dump.
 2. Pick a **timeframe** (day/week/month/year - defaults to week) and click
    **"Generate"** — this runs the RAG pipeline and the no-retrieval
    baseline side by side over that window of posts, predicting the same
@@ -257,13 +263,15 @@ Either way, once it's running:
 pytest
 ```
 
-99 tests across 16 files:
+110 tests across 18 files:
 
 | File | Covers |
 |---|---|
 | `test_parser.py` | HTML parsing against representative SMF-structure fixtures |
 | `test_xenforo_parser.py` | HTML parsing against representative XenForo-structure fixtures, incl. sticky-thread flagging and quote/signature stripping |
-| `test_ingest.py` | platform-agnostic fetch-phase orchestration (max-posts cap, per-post windowing, topic-fetch errors), against a fake HTTP client - no real network calls |
+| `test_http_client.py` | `RateLimiter`'s wait/no-wait timing logic in isolation, with `time.monotonic`/`time.sleep` mocked out - no real waiting |
+| `test_ingest.py` | platform-agnostic fetch-phase orchestration (max-posts cap, per-post windowing, topic-fetch errors, phase transitions), against a fake HTTP client - no real network calls |
+| `test_ingest_job.py` | the background-job state machine (idle/running/done/error transitions, "already running" guard), with the crawl/DB/indexing collaborators mocked out |
 | `test_smf_adapter.py` | SMF's discovery mechanics: single global feed, paginated newest-first, stopping on the first too-old entry |
 | `test_xenforo_adapter.py` | XenForo's discovery mechanics: per-board pagination, board exclusion skipping a fetch entirely, and sticky threads never triggering a false stop |
 | `test_forum_adapter.py` | the `ForumAdapter` registry, and that crawl orchestration works with a fake adapter whose discovery mechanics resemble neither shipped platform |
@@ -401,6 +409,58 @@ assumptions into "platform-agnostic" code. See `forum_adapter.py`'s
 module docstring for the full reasoning. Test coverage grew from 69 to 93
 assertions in this pass.
 
+**Frontend and backend were decoupled onto separate ports** (8000 for the
+static UI, 8080 for the API) instead of nginx reverse-proxying `/api/` to
+one same-origin backend. That trade-off is real: it's simpler to reason
+about (two independent processes, neither aware of the other's existence
+- the frontend's `API_BASE` just assumes the API lives on port 8080 of
+whatever host served the page) at the cost of needing actual CORS
+(`main.py`) instead of getting a free ride from same-origin requests.
+Chosen because it was asked for directly, not because it's strictly
+better - the earlier nginx-proxy setup was a perfectly reasonable choice
+too.
+
+**PDF generation uses WeasyPrint** (`generation/report_pdf.py`) - real
+HTML+CSS converted to a PDF, so the "Download report" button produces a
+styled document instead of a raw `.txt` dump, with zero manual
+drawing/positioning code to maintain. One real surprise worth recording:
+WeasyPrint imports cleanly and renders correctly with nothing extra
+installed in a normal dev environment, which looks like proof it's
+pure-Python - it isn't. It `dlopen()`s Pango/GLib at import time and only
+worked locally because those happened to already be present on that
+machine for unrelated reasons; it failed immediately in the actual
+`python:3.12-slim` Docker image, which is the environment that matters.
+Caught by testing the real container, not the dev venv - `backend/Dockerfile`
+now installs `libpango-1.0-0`, `libpangoft2-1.0-0`, `libgdk-pixbuf-2.0-0`,
+and `fonts-dejavu-core` explicitly.
+
+**Ingestion runs as a background job, not one blocking request**
+(`api/ingest_job.py`): a real crawl under a polite rate limit can take
+minutes, so `/api/ingest` starts it and returns immediately, and the
+frontend polls `/api/ingest/status` for a progress bar - genuinely
+accurate where the numbers are knowable (a real "N of M topics fetched"
+once discovery finishes), honestly indeterminate where they aren't
+(discovery has no fixed page count to aim for). Replaced a raw
+`JSON.stringify()` debug dump in the UI with that progress bar and a
+plain success/error banner.
+
+**A second SOLID pass** re-read every class and function against all
+five principles specifically (not just Clean Code generally). Two real
+gaps: `ingest.py` and both adapters type-hinted the *concrete*
+`PoliteForumClient` even though tests were already duck-typing fakes
+against it - added an explicit `ForumClient` Protocol (`http_client.py`)
+so that inversion is now visible in the type system, matching the
+`ForumAdapter` pattern already used for platforms. And `PoliteForumClient`
+bundled "reach the network" with "pace requests" in one class - split
+into a standalone `RateLimiter`, independently unit-testable with mocked
+time instead of only ever being exercised indirectly through a crawl.
+`report_pdf.render_report_pdf` was similarly split into a pure
+`_build_html` (testable as plain text) and a two-line wrapper that just
+calls WeasyPrint. One thing deliberately *not* changed: `IngestReport`
+knowingly serves two purposes (final summary and live progress snapshot)
+- splitting it would mean threading two parallel objects through the
+crawl for the same underlying counters, for no real benefit.
+
 **The spec's optional `/insights` step:** this was built in Cowork (an
 Anthropic product for delegating file/task work), not the Claude Code CLI,
 so there's no `/insights` command available in this environment to run and
@@ -411,17 +471,16 @@ for a command that wasn't actually run.
 
 ```
 backend/app/
-  crawler/       HTTP client, ingestion orchestration, pluggable ForumAdapter (forum_adapter.py, adapter_registry.py); parser.py + smf_adapter.py (SMF) and xenforo_parser.py + xenforo_adapter.py (XenForo) are the two shipped implementations
+  crawler/       HTTP client + rate limiter (http_client.py), ingestion orchestration, pluggable ForumAdapter (forum_adapter.py, adapter_registry.py); parser.py + smf_adapter.py (SMF) and xenforo_parser.py + xenforo_adapter.py (XenForo) are the two shipped implementations
   rag/            chunking, embeddings, vector store, retrieval, visualization
-  generation/     prompts, Claude client, RAG doc, baseline doc, A/B comparison, report filename + PDF rendering
+  generation/     prompts, Claude client, RAG doc, baseline doc, A/B comparison, report filename + PDF rendering (WeasyPrint)
   db/              schema, connection (sqlite-vec), repository (all SQL lives here)
-  api/             FastAPI routes + request/response schemas
+  api/             FastAPI routes + request/response schemas + the background ingest-job tracker (ingest_job.py)
   tests/           pytest suite + HTML fixtures
   models.py        shared data types (e.g. `IngestedPost`) used across layers
-  main.py          FastAPI app, serves the frontend as static files
+  main.py          FastAPI app + CORS setup - no longer serves the frontend itself (see "decoupled" note below)
   Dockerfile       backend container image (built from repo root as context)
-frontend/          vanilla HTML/CSS/JS, no build step
-  Dockerfile       nginx container image, serves the static files
-  nginx.conf       reverse-proxies /api/ to the backend container
-docker-compose.yml two-service stack (backend + frontend) - see "Getting Started"
+frontend/          vanilla HTML/CSS/JS, no build step - a separate static server, not served by the backend
+  Dockerfile       nginx container image, serves the static files only (no /api/ proxying - see Architecture)
+docker-compose.yml two-service stack (backend + frontend), decoupled - see "Getting Started"
 ```

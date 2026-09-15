@@ -24,7 +24,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from app.crawler.forum_adapter import DiscoveredTopic, ForumAdapter, IngestReport, is_excluded_board
-from app.crawler.http_client import PoliteForumClient
+from app.crawler.http_client import ForumClient
 from app.crawler.parser import TopicPost
 from app.crawler.xenforo_parser import (
     ForumBoard,
@@ -50,7 +50,7 @@ class XenForoForumAdapter(ForumAdapter):
 
     def discover_recent_topics(
         self,
-        client: PoliteForumClient,
+        client: ForumClient,
         now: datetime,
         cutoff: datetime,
         excluded_boards: tuple[str, ...],
@@ -66,7 +66,7 @@ class XenForoForumAdapter(ForumAdapter):
 
         return discovered
 
-    def _discover_boards(self, client: PoliteForumClient, report: IngestReport) -> list[ForumBoard]:
+    def _discover_boards(self, client: ForumClient, report: IngestReport) -> list[ForumBoard]:
         result = client.fetch("")
         report.pages_fetched += 1
         if result.status_code != 200:
@@ -76,7 +76,7 @@ class XenForoForumAdapter(ForumAdapter):
 
     def _discover_board_topics(
         self,
-        client: PoliteForumClient,
+        client: ForumClient,
         board: ForumBoard,
         now: datetime,
         cutoff: datetime,
