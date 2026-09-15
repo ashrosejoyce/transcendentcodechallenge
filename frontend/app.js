@@ -55,25 +55,94 @@ function formatDate(iso) {
 }
 
 // ---- ingest ------------------------------------------------------------
+//
+// A real crawl can take minutes under a polite rate limit (see
+// CRAWL_REQUEST_DELAY_SECONDS), so /api/ingest just starts the job and
+// returns immediately - progress comes from polling /api/ingest/status.
+// The bar is genuinely accurate once discovery finishes and the fetch
+// phase's real total is known; before that (discovery has no fixed total
+// to aim for) it's an honest indeterminate sweep, not a guessed number.
+
+const INGEST_POLL_MS = 1000;
+let ingestPollTimer = null;
 
 $("ingest-btn").addEventListener("click", async () => {
   const button = $("ingest-btn");
   button.disabled = true;
   button.textContent = "Crawling forum …";
+  showIngestProgress("Starting crawl …", true);
   try {
-    const report = await fetchJSON("/api/ingest", { method: "POST" });
-    $("ingest-log-panel").hidden = false;
-    $("ingest-log").textContent = JSON.stringify(report, null, 2);
-    await loadStats();
-    await loadEmbeddingVisualization();
+    await fetchJSON("/api/ingest", { method: "POST" });
+    pollIngestStatus();
   } catch (error) {
-    $("ingest-log-panel").hidden = false;
-    $("ingest-log").textContent = `Ingest failed: ${error.message}`;
-  } finally {
-    button.disabled = false;
-    button.textContent = "Refresh data from forum";
+    showIngestBanner(false, `Couldn't start the crawl: ${error.message}`);
+    resetIngestButton();
   }
 });
+
+async function pollIngestStatus() {
+  clearTimeout(ingestPollTimer);
+  let status;
+  try {
+    status = await fetchJSON("/api/ingest/status");
+  } catch (error) {
+    showIngestBanner(false, `Lost track of the crawl: ${error.message}`);
+    resetIngestButton();
+    return;
+  }
+
+  if (status.status === "running") {
+    renderIngestProgress(status);
+    ingestPollTimer = setTimeout(pollIngestStatus, INGEST_POLL_MS);
+    return;
+  }
+
+  if (status.status === "error") {
+    showIngestBanner(false, `Crawl failed: ${status.error}`);
+  } else if (status.status === "done") {
+    const postWord = status.posts_saved === 1 ? "post" : "posts";
+    const chunkWord = status.chunks_created === 1 ? "chunk" : "chunks";
+    showIngestBanner(true, `Success — ${status.posts_saved} new ${postWord} saved, ${status.chunks_created} ${chunkWord} indexed.`);
+    await loadStats();
+    await loadEmbeddingVisualization();
+  }
+  resetIngestButton();
+}
+
+function renderIngestProgress(status) {
+  if (status.phase === "fetching_topics" && status.topics_total > 0) {
+    const percent = Math.min(100, Math.round((status.topics_fetched / status.topics_total) * 100));
+    showIngestProgress(`Fetching thread content … ${status.topics_fetched} of ${status.topics_total}`, false, percent);
+  } else {
+    const pageWord = status.pages_fetched === 1 ? "page" : "pages";
+    showIngestProgress(`Discovering recent activity … ${status.pages_fetched} ${pageWord} checked`, true);
+  }
+}
+
+function showIngestProgress(label, indeterminate, percent = 0) {
+  $("ingest-status-panel").hidden = false;
+  $("ingest-banner").hidden = true;
+  $("ingest-progress").hidden = false;
+  setText("ingest-progress-label", label);
+  const fill = $("ingest-progress-fill");
+  fill.classList.toggle("indeterminate", indeterminate);
+  fill.style.width = indeterminate ? "" : `${percent}%`;
+}
+
+function showIngestBanner(success, message) {
+  $("ingest-status-panel").hidden = false;
+  $("ingest-progress").hidden = true;
+  const banner = $("ingest-banner");
+  banner.hidden = false;
+  banner.textContent = message;
+  banner.className = `banner ${success ? "banner-success" : "banner-error"}`;
+}
+
+function resetIngestButton() {
+  const button = $("ingest-btn");
+  button.disabled = false;
+  button.textContent = "Refresh data from forum";
+}
 
 // ---- generate (A/B) -----------------------------------------------------
 

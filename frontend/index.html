@@ -23,9 +23,12 @@
     <div class="stat-tile"><span class="stat-label">Date range</span><span class="stat-value stat-value-small" id="stat-range">&ndash;</span></div>
   </section>
 
-  <section class="panel" id="ingest-log-panel" hidden>
-    <h2>Last ingest run</h2>
-    <pre id="ingest-log" class="log"></pre>
+  <section class="panel" id="ingest-status-panel" hidden>
+    <div id="ingest-progress" class="progress-wrap">
+      <p class="progress-label" id="ingest-progress-label">Starting &hellip;</p>
+      <div class="progress-track"><div class="progress-fill" id="ingest-progress-fill"></div></div>
+    </div>
+    <div id="ingest-banner" class="banner" hidden></div>
   </section>
 
   <section class="panel">

@@ -47,7 +47,13 @@ class IngestReport:
     particular is counted at whatever granularity a platform can offer
     without extra requests - per-entry for SMF's single mixed feed,
     per-board for XenForo (which skips fetching an excluded board's
-    listing at all rather than fetching-then-discarding it)."""
+    listing at all rather than fetching-then-discarding it).
+
+    `phase` and `topics_total` exist only so a caller can poll this same
+    (mutable, in-progress) instance for a progress readout while a crawl
+    that can take minutes (see PoliteForumClient's rate limiting) is
+    still running - see api/ingest_job.py. They carry no meaning once the
+    crawl has returned; `phase` just ends at "done"."""
 
     posts: list[IngestedPost] = field(default_factory=list)
     pages_fetched: int = 0
@@ -56,6 +62,8 @@ class IngestReport:
     skipped_out_of_window: int = 0
     skipped_unparsable_timestamp: int = 0
     errors: list[str] = field(default_factory=list)
+    phase: str = "discovering"  # "discovering" | "fetching_topics" | "done"
+    topics_total: int = 0
 
 
 @dataclass(frozen=True)

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from app.crawler.forum_adapter import DiscoveredTopic
+from app.crawler.forum_adapter import DiscoveredTopic, IngestReport
 from app.crawler.http_client import FetchResult
 from app.crawler.ingest import crawl_recent_activity
 from app.crawler.parser import TopicPost
@@ -134,3 +134,32 @@ def test_ingested_post_fields_are_built_from_discovery_and_topic_page():
     assert post.author == "Alice"
     assert post.body == "hello"
     assert post.url == "https://example-forum.invalid/t/42#p7"
+
+
+def test_report_progresses_through_phases_and_records_topics_total():
+    discovered = {
+        1: DiscoveredTopic(board="General", path="/t/1"),
+        2: DiscoveredTopic(board="General", path="/t/2"),
+    }
+    client = FakeClient({"/t/1": "<t1>", "/t/2": "<t2>"})
+    adapter = StubAdapter(discovered, {})
+
+    report = crawl_recent_activity(client, now=NOW, excluded_boards=(), adapter=adapter)
+
+    assert report.phase == "done"
+    assert report.topics_total == 2
+
+
+def test_caller_supplied_report_is_mutated_in_place():
+    """A caller that wants to poll progress mid-crawl (see
+    api/ingest_job.py) needs the exact instance it passed in to be the
+    one that ends up populated - not a fresh one built internally."""
+    discovered = {1: DiscoveredTopic(board="General", path="/t/1")}
+    client = FakeClient({"/t/1": "<t1>"})
+    adapter = StubAdapter(discovered, {})
+    my_report = IngestReport()
+
+    returned = crawl_recent_activity(client, now=NOW, excluded_boards=(), adapter=adapter, report=my_report)
+
+    assert returned is my_report
+    assert my_report.phase == "done"

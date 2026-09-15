@@ -42,22 +42,32 @@ def crawl_recent_activity(
     max_posts: int | None = None,
     excluded_boards: tuple[str, ...] | None = None,
     adapter: ForumAdapter | None = None,
+    report: IngestReport | None = None,
 ) -> IngestReport:
+    """`report` can be supplied by the caller (rather than always
+    constructed here) so a long-running caller - this crawl can take
+    minutes under a real rate limit - can hold a reference to the same
+    mutable instance and poll its `phase`/`pages_fetched`/`topics_fetched`
+    fields for a live progress readout while the crawl is still in
+    flight. See api/ingest_job.py."""
     now = now or datetime.now(UTC)
     lookback_days = lookback_days if lookback_days is not None else settings.crawl_lookback_days
     max_posts = max_posts if max_posts is not None else settings.crawl_max_posts
     excluded_boards = excluded_boards if excluded_boards is not None else settings.forum_excluded_boards
     adapter = adapter if adapter is not None else get_adapter(settings.forum_adapter)
     cutoff = now - timedelta(days=lookback_days)
+    report = report if report is not None else IngestReport()
 
-    report = IngestReport()
     discovered = adapter.discover_recent_topics(client, now, cutoff, excluded_boards, report)
+    report.phase = "fetching_topics"
+    report.topics_total = len(discovered)
 
     for topic_id, topic in discovered.items():
         if len(report.posts) >= max_posts:
             break
         _fetch_topic_posts(client, adapter, topic_id, topic, now, cutoff, report)
 
+    report.phase = "done"
     return report
 
 

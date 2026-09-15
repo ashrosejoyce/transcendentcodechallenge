@@ -13,18 +13,33 @@ class CommunityInfo(BaseModel):
     community_name: str
 
 
-class IngestResponse(BaseModel):
-    """Result of one crawl+index run - counts plus per-reason skip totals,
-    so a caller can tell "nothing new" apart from "something went wrong"."""
+class IngestStartResponse(BaseModel):
+    """`started` is False when a crawl was already running - the caller
+    should just start polling /api/ingest/status regardless, since that
+    reflects whichever run is actually in flight."""
 
-    posts_saved: int
-    posts_indexed: int
-    chunks_created: int
+    started: bool
+
+
+class IngestStatusResponse(BaseModel):
+    """Polled while a crawl+index run is in progress (or after it
+    finishes) - a crawl under a real forum's rate limit can take minutes,
+    so this is what lets the frontend show live progress instead of one
+    request blocking the whole time. `posts_saved`/`posts_indexed`/
+    `chunks_created` stay None until `status` is "done"."""
+
+    status: str  # "idle" | "running" | "done" | "error"
+    phase: str
     pages_fetched: int
     topics_fetched: int
+    topics_total: int
     skipped_excluded_board: int
     skipped_out_of_window: int
     errors: list[str]
+    posts_saved: int | None = None
+    posts_indexed: int | None = None
+    chunks_created: int | None = None
+    error: str | None = None
 
 
 class StatsResponse(BaseModel):

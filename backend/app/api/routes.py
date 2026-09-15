@@ -6,54 +6,62 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Response
 
+from app.api.ingest_job import current_status, start_ingest_job
 from app.api.schemas import (
     CommunityInfo,
     EmbeddingPoint,
     GenerateRequest,
     GenerateResponse,
-    IngestResponse,
+    IngestStartResponse,
+    IngestStatusResponse,
     ReportPdfRequest,
     RetrievedChunkView,
     StatsResponse,
 )
 from app.config import settings
-from app.crawler.http_client import PoliteForumClient
-from app.crawler.ingest import crawl_recent_activity
 from app.db.connection import get_connection
-from app.db.repository import corpus_stats, retrieval_counts, save_posts
+from app.db.repository import corpus_stats, retrieval_counts
 from app.generation.ab_comparison import run_ab_comparison
 from app.generation.claude_client import MissingApiKeyError
 from app.generation.report_filename import build_report_filename
 from app.generation.report_pdf import PdfSourceChunk, render_report_pdf
 from app.generation.timeframe import resolve_timeframe
-from app.rag.indexing import index_pending_posts
 from app.rag.visualization import flattened_embeddings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
 
 
-@router.post("/ingest", response_model=IngestResponse)
-def ingest() -> IngestResponse:
-    """Crawl the configured forum for recent activity, then chunk+embed
-    whatever's newly saved. Safe to call repeatedly - both the crawl
-    (primary-key skip) and indexing (only un-chunked posts) are idempotent."""
-    with PoliteForumClient() as client:
-        crawl_report = crawl_recent_activity(client)
+@router.post("/ingest", response_model=IngestStartResponse)
+def ingest() -> IngestStartResponse:
+    """Start a crawl+index run in the background (see api/ingest_job.py)
+    and return immediately - a real crawl's rate limit can make it take
+    minutes, so the frontend polls /api/ingest/status for progress rather
+    than this request blocking the whole time. Safe to call repeatedly:
+    both the crawl (primary-key skip) and indexing (only un-chunked
+    posts) are idempotent, and calling this while one is already running
+    just starts polling the run already in flight."""
+    return IngestStartResponse(started=start_ingest_job())
 
-    with get_connection() as conn:
-        saved = save_posts(conn, crawl_report.posts)
-        index_report = index_pending_posts(conn)
 
-    return IngestResponse(
-        posts_saved=saved,
-        posts_indexed=index_report.posts_indexed,
-        chunks_created=index_report.chunks_created,
-        pages_fetched=crawl_report.pages_fetched,
-        topics_fetched=crawl_report.topics_fetched,
-        skipped_excluded_board=crawl_report.skipped_excluded_board,
-        skipped_out_of_window=crawl_report.skipped_out_of_window,
-        errors=crawl_report.errors,
+@router.get("/ingest/status", response_model=IngestStatusResponse)
+def ingest_status() -> IngestStatusResponse:
+    """Current (or most recently finished) ingest job's progress."""
+    state = current_status()
+    report = state.report
+    return IngestStatusResponse(
+        status=state.status,
+        phase=report.phase if report else "idle",
+        pages_fetched=report.pages_fetched if report else 0,
+        topics_fetched=report.topics_fetched if report else 0,
+        topics_total=report.topics_total if report else 0,
+        skipped_excluded_board=report.skipped_excluded_board if report else 0,
+        skipped_out_of_window=report.skipped_out_of_window if report else 0,
+        errors=report.errors if report else [],
+        posts_saved=state.posts_saved,
+        posts_indexed=state.posts_indexed,
+        chunks_created=state.chunks_created,
+        error=state.error,
     )
 
 
