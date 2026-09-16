@@ -1,29 +1,28 @@
 # Community Voices — Beekeeping & Apiculture Forum
 
-A small web app that generates a **Community Voices Document** for the
-beekeeping community on [beekeepingforum.co.uk](https://beekeepingforum.co.uk/):
-what it's talked about in the past week (or day/month/year - see
-[Getting Started](#getting-started)), and a prediction of what it'll talk
-about next, generated with a RAG (retrieval-augmented generation) pipeline
-over that forum's own recent posts.
-
-Originally built against [Beemaster's Forum](https://beemaster.com/forum/index.php)
-(SMF-based); that forum has since put up a Cloudflare bot challenge that
-blocks every non-browser client, so the live deployment moved to
-beekeepingforum.co.uk (XenForo-based) instead - see
-[Choosing a forum](#choosing-a-forum). Both platforms are still supported
-via the pluggable `ForumAdapter` interface.
-
-Built for the Transcendent Endeavors "Community Voices" coding challenge.
-
 ## Overview
 
-**What it does:** produces a plain-language weekly digest of what an
-online community has been discussing, plus a prediction of what it'll
-discuss next - grounded in that community's own recent posts via
-retrieval-augmented generation (RAG), and shown side by side against what
-a plain LLM produces with *no* retrieval at all (the spec's A/B
-comparison).
+A small web app that generates a **Community Voices Document** for a given message board community. This document contains a digest of what it's talked about in the past week (or day/month/year - see [Getting Started](#getting-started)), and a prediction of what it'll talk about next. This report is generated with a RAG (retrieval-augmented generation) pipeline over that forum's own recent posts.
+
+## Timeline
+
+This project was built by Ash Joyce for the Transcendent Endeavors "Community Voices" coding challenge, with the assistance of Claude.
+
+The specification called for me to choose a message board topic that interests me, and I saw this as an opportunity to showcase one of my great passions: beekeeping! I am a third year backyard beekeeper in New Jersey, though my hives are currently dormant and will not be revived until at least next spring. 
+
+Finding an online community to use as a source for a Community Voices Document for beekeepers was a real challenge. Facebook and Reddit famously block automated requests from bots, and the turnaround time to request a Reddit API key was too cumbersome for this challenge. Initially I chose Beemaster's Forum, one of my favorite boards, for this challenge. However, when I reached the live testing phase, I realized that my RAG pipeline was being blocked by their Cloudflare solution, probably after hitting it a few too many times. Oops.
+
+So instead I changed the source to beekeepingforum.co.uk, a discussion board for beekeepers across the pond. While a good deal of discussion that takes place on these boards is regional, there's still a lot to be learned about different climates, ecological considerations, and cultural customs (for example, the Irish tradition of "Telling it to the Bees" and talking to hives about our daily lives, even going so far as to designate someone to bring condolences to our hives when we're no longer able to visit.) Plus, many beekeeping practices are universal!
+
+However, even while using the Beemaster forum, I recognized that it was running off of SMF, and I also know of Xenforo and phpBB as platforms, and thought to myself "well, this platform doesn't have to be bound to exclusively one board".
+
+Enter the adapter design pattern. The SMFAdapter, while vestigial to this implementation, represents the ability to point this app at any message board that is running the SMF platform. The XenForoAdapter was built for beekeepingforum.co.uk, but can be pointed at other forums using that platform. This ensures the extensibility of the app!
+
+But enough about my thought process. Here are the brass tacks.
+
+## How it works
+
+The report generation produces a plain-language weekly digest of what an online community has been discussing, plus a prediction of what it'll discuss next, alongside a standard LLM report generation.
 
 **How it works, at a glance** (full diagram + spec-item mapping in
 [Architecture](#architecture) below):
@@ -45,120 +44,6 @@ comparison).
 Nothing here is hardcoded to one specific forum - see
 [Pointing this at a different forum](#pointing-this-at-a-different-forum).
 
-## Choosing a forum
-
-The challenge asks for a community with frequent activity throughout any
-given week. Beemaster's Forum was the original choice, picked after
-checking several candidates by hand: it was freely crawlable (no login
-wall, permissive `robots.txt`) and its recent-posts feed showed 8+
-distinct posts in a single day at the time - comfortably active enough
-for a week-over-week digest.
-
-Reddit's r/beekeeping was the first choice, but as of 2026 Reddit's Data API
-requires explicit pre-approval under its Responsible Builder Policy for
-*any* app, including small read-only hobby scripts — with no published SLA
-(reports of 8+ week waits, denials with no reason given). That's incompatible
-with a short take-home project, so it was dropped in favor of a source with
-no approval gate.
-
-**Beemaster's Forum later put up a Cloudflare bot challenge** that returns
-a "Just a moment..." JS-challenge page to every non-browser client -
-confirmed from three independent network paths, so it's not an IP-
-reputation issue that switching networks would fix. Circumventing an
-active anti-bot challenge wasn't something to build around, so the live
-deployment moved to [beekeepingforum.co.uk](https://beekeepingforum.co.uk/)
-instead: a genuinely active beekeeping community (real posts spread
-across every hour of the day at the time of writing), reachable with a
-plain HTTP client, and with a robots.txt that explicitly permits crawling
-(`Crawl-delay: 5`, respected via `CRAWL_REQUEST_DELAY_SECONDS`) - it even
-carries a dedicated, explicit allowance for AI-related crawlers
-(throttled rather than blocked), unlike some other candidates checked
-along the way that disallow them outright. It runs XenForo rather than
-SMF, which is what motivated adding a second `ForumAdapter` (see
-[Pointing this at a different forum](#pointing-this-at-a-different-forum))
-instead of only ever supporting one platform.
-
-## Architecture
-
-```
-crawler (httpx + BeautifulSoup)
-   -> discovers recent activity however the platform's ForumAdapter does
-      it (SMF: one global feed; XenForo: per-board pagination - see
-      "Pointing this at a different forum" below), bounded to the last
-      N days and a max-post cap, skipping off-topic boards
-   -> fetches each active topic once, keeps only in-window posts
-        |
-        v
-chunking (paragraph-aware, overlapping)
-        |
-        v
-embeddings (sentence-transformers, local, no API key)
-        |
-        v
-SQLite + sqlite-vec vector store  <-- retrieval events logged here
-        |
-        v
-retrieval (top-k nearest chunks, every retrieval logged for stats)
-        |
-        v
-generation (Claude, via ANTHROPIC_API_KEY)
-   -> RAG-grounded document (uses retrieved chunks)
-   -> baseline document (same prompt, zero retrieval) --- the A/B pair
-        |
-        v
-FastAPI JSON API  ->  decoupled frontend (vanilla JS, no build step,
-                       cross-origin over CORS - see "Getting Started")
-   - document view (RAG vs. baseline, side by side)
-   - embedding scatter plot (PCA-flattened, spec item 3b)
-   - most-retrieved-chunk stats (spec item 3c)
-   - "Download report" -> WeasyPrint renders the same content as a PDF
-```
-
-Spec item mapping, for reviewers skimming against the brief:
-
-| Spec item | Where |
-|---|---|
-| 1. Active community | beekeepingforum.co.uk (see [Choosing a forum](#choosing-a-forum)) |
-| 2. Community Voices Document | `generation/document_generator.py`, rendered in the frontend |
-| 3a. Vector store | SQLite + `sqlite-vec` (`db/schema.py`, `db/connection.py`) |
-| 3b. Flattened embedding visualization | `rag/visualization.py` (PCA to 2D) + the scatter plot in the frontend |
-| 3c. Retrieval stats | `retrieval_events` table, logged in `rag/retrieval.py`, surfaced via `/api/stats` and the bar chart |
-| 4. Automated ingestion | `crawler/` (bounded, idempotent, skips off-topic boards) |
-| 4b. Bounding data volume | lookback window + `CRAWL_MAX_POSTS` cap + board exclusion list, all in `.env` |
-| 5. A/B comparison | `generation/ab_comparison.py`, rendered side by side in the UI |
-
-### Pointing this at a different forum
-
-The crawler talks to forums through a `ForumAdapter` interface
-(`crawler/forum_adapter.py`) instead of assuming any one platform's
-conventions directly - `ingest.py`'s orchestration only ever calls the
-adapter, including for *discovering* recent activity, never a specific
-platform's URLs/HTML/timestamps/discovery mechanics itself.
-
-That last part matters: SMF exposes one global "recent activity" feed,
-paginated newest-first, where one too-old entry means everything after it
-is too old too. XenForo has no such feed a crawler is allowed to use (its
-equivalent, `/whats-new/`, is `Disallow`ed by robots.txt on real
-installs) - discovery instead means paging each board's own listing
-independently, and XenForo always pins "sticky" threads to the top
-regardless of their own age, so an old sticky must never be mistaken for
-a stop signal. Rather than force every platform through one shared
-pagination loop (breaking XenForo, or smuggling SMF assumptions into
-"platform-agnostic" code), each adapter owns its whole
-`discover_recent_topics()` method - see `forum_adapter.py`'s module
-docstring for the full reasoning.
-
-- **Another SMF-based or XenForo-based forum:** just change
-  `FORUM_BASE_URL` (and `FORUM_EXCLUDED_BOARDS`) in `.env` - no code
-  changes needed.
-- **A forum running different software** (phpBB, Discourse, vBulletin,
-  ...): write a new class implementing `ForumAdapter`, register it in
-  `crawler/adapter_registry.py` under a new name, then point
-  `FORUM_ADAPTER` at that name. `smf_adapter.py` and `xenforo_adapter.py`
-  (each wrapping their own `*_parser.py`) are complete reference
-  implementations, deliberately different in shape from each other, to
-  model a new one on. No other module needs to change.
-
 ## Getting Started
 
 Start here either way - Docker needs nothing but Docker itself; running
@@ -169,31 +54,23 @@ git clone git@github.com:ashrosejoyce/transcendentcodechallenge.git
 cd transcendentcodechallenge
 
 cp .env.example .env
-# then edit .env and set your own ANTHROPIC_API_KEY
-# (get one at https://platform.claude.com/settings/keys — see note below)
-# every other setting in .env.example is optional; defaults work out of
-# the box for exploring the app against beekeepingforum.co.uk.
 ```
 
-> **On the API key:** the app reads `ANTHROPIC_API_KEY` from your environment
-> (via `.env`, which is git-ignored). Reviewers should use their **own** key —
-> never a key shared over chat/email — by generating one at
-> platform.claude.com and dropping it into their local `.env`. The app will
-> not run generation without it, but ingestion/embedding/retrieval/the
-> visualization all work with no key at all.
+Then edit .env and set your own ANTHROPIC_API_KEY (get one at https://platform.claude.com/settings/keys — see note below) every other setting in .env.example is optional; defaults work out of the box for exploring the app against beekeepingforum.co.uk.
+
+**On the API key:** the app reads `ANTHROPIC_API_KEY` from your environment (via `.env`, which is git-ignored). Reviewers should use their **own** key — never a key shared over chat/email — by generating one at platform.claude.com and dropping it into their local `.env`. The app will not run generation without it, but ingestion/embedding/retrieval/the visualization all work with no key at all.
+
+You can also define the FORUM_BASE_URL and the FORUM_ADAPTER environment values to point to different message boards. Available adapters are xenforo and smf.
 
 ### Option A: Docker (recommended)
 
-No local Python install needed - everything, including the embedding
-model, is baked into the image at build time.
+No local Python install needed - everything, including the embedding model, is baked into the image at build time.
 
 ```bash
 docker compose up --build
 ```
 
-Then open **http://localhost:8000**. Two containers, deliberately
-decoupled - no reverse proxy between them, just CORS (see
-`docker-compose.yml`):
+Then open **http://localhost:8000**. Two containers, deliberately decoupled - no reverse proxy between them, just CORS (see `docker-compose.yml`):
 
 | Service | What it is | Port |
 |---|---|---|
@@ -256,6 +133,55 @@ Either way, once it's running:
    full source list as a formatted PDF (`generation/report_pdf.py`),
    named after whichever community was analyzed (see
    `generation/report_filename.py`).
+
+## Architecture
+
+```
+crawler (httpx + BeautifulSoup)
+   -> discovers recent activity however the platform's ForumAdapter does
+      it (SMF: one global feed; XenForo: per-board pagination - see
+      "Pointing this at a different forum" below), bounded to the last
+      N days and a max-post cap, skipping off-topic boards
+   -> fetches each active topic once, keeps only in-window posts
+        |
+        v
+chunking (paragraph-aware, overlapping)
+        |
+        v
+embeddings (sentence-transformers, local, no API key)
+        |
+        v
+SQLite + sqlite-vec vector store  <-- retrieval events logged here
+        |
+        v
+retrieval (top-k nearest chunks, every retrieval logged for stats)
+        |
+        v
+generation (Claude, via ANTHROPIC_API_KEY)
+   -> RAG-grounded document (uses retrieved chunks)
+   -> baseline document (same prompt, zero retrieval) --- the A/B pair
+        |
+        v
+FastAPI JSON API  ->  decoupled frontend (vanilla JS, no build step,
+                       cross-origin over CORS - see "Getting Started")
+   - document view (RAG vs. baseline, side by side)
+   - embedding scatter plot (PCA-flattened, spec item 3b)
+   - most-retrieved-chunk stats (spec item 3c)
+   - "Download report" -> WeasyPrint renders the same content as a PDF
+```
+
+Spec item mapping, for reviewers skimming against the brief:
+
+| Spec item | Where |
+|---|---|
+| 1. Active community | beekeepingforum.co.uk (see [Choosing a forum](#choosing-a-forum)) |
+| 2. Community Voices Document | `generation/document_generator.py`, rendered in the frontend |
+| 3a. Vector store | SQLite + `sqlite-vec` (`db/schema.py`, `db/connection.py`) |
+| 3b. Flattened embedding visualization | `rag/visualization.py` (PCA to 2D) + the scatter plot in the frontend |
+| 3c. Retrieval stats | `retrieval_events` table, logged in `rag/retrieval.py`, surfaced via `/api/stats` and the bar chart |
+| 4. Automated ingestion | `crawler/` (bounded, idempotent, skips off-topic boards) |
+| 4b. Bounding data volume | lookback window + `CRAWL_MAX_POSTS` cap + board exclusion list, all in `.env` |
+| 5. A/B comparison | `generation/ab_comparison.py`, rendered side by side in the UI |
 
 ## Running the tests
 
